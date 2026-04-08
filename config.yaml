@@ -1,0 +1,47 @@
+# ===========================================
+# Model Configuration
+# ===========================================
+models:
+  primary: claude-sonnet-4-20250514
+  embedding: text-embedding-3-small
+  fallback: gpt-4o-mini
+
+# ===========================================
+# Neo4j Configuration
+# ===========================================
+neo4j:
+  uri: ${NEO4J_URI:-bolt://localhost:7687}
+  username: ${NEO4J_USERNAME:-neo4j}
+  password: ${NEO4J_PASSWORD}
+
+# ===========================================
+# Sampling Configuration
+# ===========================================
+sampling:
+  min_steps: 2
+  max_steps: 5
+  semantic_threshold: 0.7
+  max_start_candidates: 10
+  max_neighbors: 10
+
+# ===========================================
+# Quality Configuration
+# ===========================================
+quality:
+  min_score: 3.5
+  max_retries: 3
+  require_multi_tool: true
+
+# ===========================================
+# Generation Configuration
+# ===========================================
+generation:
+  default_count: 100
+  parallel_workers: 4
+
+# ===========================================
+# Cache Configuration
+# ===========================================
+cache:
+  enabled: ${CACHE_ENABLED:-true}
+  directory: ${CACHE_DIR:-.cache}

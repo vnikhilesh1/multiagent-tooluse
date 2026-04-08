@@ -1,0 +1,110 @@
+# ===========================================
+# Python Artifacts
+# ===========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ===========================================
+# Virtual Environments
+# ===========================================
+venv/
+.venv/
+env/
+ENV/
+
+# ===========================================
+# IDE and Editor Files
+# ===========================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+.spyderproject
+.spyproject
+
+# ===========================================
+# Environment Files
+# ===========================================
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+
+# ===========================================
+# Cache Directories
+# ===========================================
+.cache/
+*.cache
+.ruff_cache/
+
+# ===========================================
+# Data Files (keep directories, ignore contents)
+# ===========================================
+data/toolbench/*
+!data/toolbench/.gitkeep
+data/generated/*
+!data/generated/.gitkeep
+
+# ===========================================
+# Test Artifacts
+# ===========================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# ===========================================
+# Type Checking
+# ===========================================
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ===========================================
+# Jupyter Notebooks
+# ===========================================
+.ipynb_checkpoints/
+
+# ===========================================
+# OS Files
+# ===========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ===========================================
+# Project-Specific
+# ===========================================
+*.log
+*.jsonl
+!tests/fixtures/*.jsonl
