@@ -108,3 +108,18 @@ Thumbs.db
 *.log
 *.jsonl
 !tests/fixtures/*.jsonl
+
+# ===========================================
+# Validation Scripts (temporary/testing)
+# ===========================================
+validate_task_*.py
+validate_phase_*.py
+test_api_key.py
+test_endpoints.py
+
+# ===========================================
+# Large Data & Personal Files
+# ===========================================
+data/
+prompts.txt
+Tasks.txt

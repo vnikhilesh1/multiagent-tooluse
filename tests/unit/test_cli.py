@@ -131,10 +131,11 @@ class TestConfigCommands:
             f.write("""
 models:
   primary: test-model
-neo4j:
-  uri: bolt://test:7687
-  username: test
-  password: test
+graph:
+  path: .cache/graph.pkl
+  format: pickle
+  embeddings_path: .cache/embeddings.npz
+  similarity_threshold: 0.7
 """)
             f.flush()
 
@@ -198,10 +199,11 @@ class TestConfigLoading:
             f.write("""
 models:
   primary: test-model
-neo4j:
-  uri: bolt://test:7687
-  username: test
-  password: test
+graph:
+  path: .cache/graph.pkl
+  format: pickle
+  embeddings_path: .cache/embeddings.npz
+  similarity_threshold: 0.7
 """)
             f.flush()
 

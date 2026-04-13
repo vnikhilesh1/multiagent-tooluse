@@ -8,11 +8,16 @@ This module provides the command-line interface using Typer with:
 """
 
 import logging
+import random
+import signal
+import sys
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.table import Table
 
 from src.config import Config, apply_cli_overrides, get_default_config, load_config, validate_config
@@ -149,7 +154,7 @@ def build(
     """Build tool graph from ToolBench data.
 
     Ingests ToolBench API specifications, creates tool/endpoint nodes,
-    and builds the tool graph in Neo4j with semantic similarity edges.
+    and builds the tool graph in NetworkX with semantic similarity edges.
 
     Example:
         toolgen build --toolbench-path ./data/toolbench
@@ -157,7 +162,7 @@ def build(
     logger.info(f"Building graph from: {toolbench_path}")
 
     if state.verbose:
-        console.print(f"[dim]Config: Neo4j at {state.config.neo4j.uri}[/dim]")
+        console.print(f"[dim]Config: Graph at {state.config.graph.path}[/dim]")
         console.print(f"[dim]LLM inference: {'enabled' if use_llm_inference else 'disabled'}[/dim]")
 
     # TODO: Implement actual build logic
@@ -243,6 +248,13 @@ def generate(
     Example:
         toolgen generate --output conversations.jsonl --count 100
     """
+    from src.evaluation.serialization import write_dataset, serialize_conversation
+    from src.graph.client import GraphClient
+    from src.llm import create_client_from_config, create_cache_from_config
+    from src.orchestrator import ConversationOrchestrator
+    from src.sampling.constraints import SamplingConstraints
+    from src.sampling.dfs_sampler import DFSSampler
+
     config = state.config
 
     # Apply CLI overrides
@@ -272,9 +284,206 @@ def generate(
         console.print(f"[dim]Parallel workers: {config.generation.parallel_workers}[/dim]")
         console.print(f"[dim]Cache: {'disabled' if no_cache else 'enabled'}[/dim]")
         console.print(f"[dim]Seed: {seed}[/dim]")
+        console.print(f"[dim]Cross-conversation steering: {'disabled' if no_cross_conversation_steering else 'enabled'}[/dim]")
 
-    # TODO: Implement actual generation logic
-    console.print("[yellow]Generate command not yet implemented[/yellow]")
+    # Set random seed for reproducibility
+    random.seed(seed)
+
+    # Track results for graceful interrupt handling
+    results = []
+    interrupted = False
+
+    def signal_handler(sig, frame):
+        nonlocal interrupted
+        interrupted = True
+        console.print("\n[yellow]Interrupted! Saving progress...[/yellow]")
+
+    # Register signal handler for graceful interrupts
+    original_handler = signal.signal(signal.SIGINT, signal_handler)
+
+    try:
+        # Step 1: Load registry from graph
+        if not state.quiet:
+            console.print("[cyan]Loading tool graph...[/cyan]")
+
+        graph_client = GraphClient(config.graph)
+        graph_client.load_graph()
+
+        stats = graph_client.get_stats()
+        if stats["total_nodes"] == 0:
+            err_console.print("[red]Error:[/red] Graph is empty. Run 'toolgen build' first to populate the graph.")
+            raise typer.Exit(1)
+
+        if not state.quiet:
+            console.print(f"[green]Loaded graph:[/green] {stats['nodes_by_type'].get('Endpoint', 0)} endpoints, {stats['nodes_by_type'].get('Tool', 0)} tools")
+
+        # Step 2: Initialize LLM client
+        if not state.quiet:
+            console.print("[cyan]Initializing LLM client...[/cyan]")
+
+        cache = None if no_cache else create_cache_from_config(config)
+        llm_client = create_client_from_config(config, cache=cache)
+
+        # Step 3: Initialize sampler with constraints
+        constraints = SamplingConstraints(
+            min_steps=config.sampling.min_steps,
+            max_steps=config.sampling.max_steps,
+            min_completeness=0.5,  # Require reasonably complete endpoints
+        )
+
+        sampler = DFSSampler(
+            client=graph_client,
+            constraints=constraints,
+            max_start_candidates=config.sampling.max_start_candidates,
+            max_neighbors=config.sampling.max_neighbors,
+        )
+
+        # Step 4: Initialize orchestrator with all agents
+        if not state.quiet:
+            console.print("[cyan]Initializing orchestrator with agents...[/cyan]")
+
+        orchestrator = ConversationOrchestrator(
+            llm=llm_client,
+            graph=graph_client,
+            sampler=sampler,
+            quality_threshold=config.quality.min_score,
+            max_retries=config.quality.max_retries,
+            use_steering=not no_cross_conversation_steering,
+        )
+
+        # Register endpoints for diversity tracking
+        endpoints = graph_client._endpoint_index
+        orchestrator.register_endpoints(endpoints)
+
+        # Step 5: Generate conversations with progress tracking
+        if not state.quiet:
+            console.print(f"[cyan]Generating {actual_count} conversations...[/cyan]")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
+            disable=state.quiet,
+        ) as progress:
+            task = progress.add_task("Generating", total=actual_count)
+
+            for i in range(actual_count):
+                if interrupted:
+                    break
+
+                # Generate single conversation
+                result = orchestrator.generate_single(
+                    seed=seed + i if seed is not None else None,
+                )
+
+                results.append(result)
+                progress.update(task, advance=1)
+
+                # Log progress
+                status = "success" if result.success else "failed"
+                logger.debug(f"Conversation {i+1}/{actual_count}: {status}")
+
+        # Step 6: Write JSONL output
+        if not state.quiet:
+            console.print(f"[cyan]Writing output to {output}...[/cyan]")
+
+        # Ensure output directory exists
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+        count_written = write_dataset(
+            results,
+            output,
+            include_failed=False,
+            include_metadata=True,
+        )
+
+        # Step 7: Print summary statistics
+        _print_generation_summary(results, count_written, output)
+
+    except Exception as e:
+        # Save partial results on error
+        if results:
+            console.print(f"[yellow]Error occurred. Saving {len(results)} partial results...[/yellow]")
+            output.parent.mkdir(parents=True, exist_ok=True)
+            write_dataset(results, output, include_failed=False, include_metadata=True)
+
+        err_console.print(f"[red]Error:[/red] {e}")
+        logger.exception("Generation failed")
+        raise typer.Exit(1)
+
+    finally:
+        # Restore original signal handler
+        signal.signal(signal.SIGINT, original_handler)
+
+
+def _print_generation_summary(results, count_written: int, output: Path):
+    """Print summary statistics for generation results."""
+    total = len(results)
+    successful = sum(1 for r in results if r.success)
+    failed = total - successful
+    repaired = sum(1 for r in results if r.repaired)
+
+    # Compute average turns and tool calls
+    turn_counts = []
+    tool_counts = []
+    tool_usage = Counter()
+    domain_usage = Counter()
+
+    for r in results:
+        if r.success and r.conversation:
+            turn_counts.append(len(r.conversation.messages))
+            tool_outputs = r.conversation.tool_outputs
+            tool_counts.append(len(tool_outputs))
+
+            # Track tool and domain usage
+            for tool_output in tool_outputs:
+                tool_id = getattr(tool_output, 'tool_id', None) or tool_output.endpoint_id.split('/')[0]
+                tool_usage[tool_id] += 1
+                domain = getattr(tool_output, 'domain', None)
+                if domain:
+                    domain_usage[domain] += 1
+
+    avg_turns = sum(turn_counts) / len(turn_counts) if turn_counts else 0
+    avg_tools = sum(tool_counts) / len(tool_counts) if tool_counts else 0
+
+    # Compute score statistics
+    scores = [r.scores.average for r in results if r.success and r.scores]
+    avg_score = sum(scores) / len(scores) if scores else 0
+    min_score = min(scores) if scores else 0
+    max_score = max(scores) if scores else 0
+
+    # Create summary table
+    table = Table(title="Generation Summary", show_header=True)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green", justify="right")
+
+    table.add_row("Total Requested", str(total))
+    table.add_row("Successful", str(successful))
+    table.add_row("Failed", str(failed))
+    table.add_row("Repaired", str(repaired))
+    table.add_row("Written to File", str(count_written))
+    table.add_row("", "")
+    table.add_row("Avg Turns/Conversation", f"{avg_turns:.1f}")
+    table.add_row("Avg Tool Calls/Conversation", f"{avg_tools:.1f}")
+    table.add_row("", "")
+    table.add_row("Avg Judge Score", f"{avg_score:.2f}")
+    table.add_row("Min Judge Score", f"{min_score:.2f}")
+    table.add_row("Max Judge Score", f"{max_score:.2f}")
+    table.add_row("", "")
+    table.add_row("Unique Tools Used", str(len(tool_usage)))
+    table.add_row("Unique Domains", str(len(domain_usage)))
+    table.add_row("", "")
+    table.add_row("Output File", str(output))
+
+    console.print(table)
+
+    # Print top tools if verbose
+    if state.verbose and tool_usage:
+        console.print("\n[dim]Top 5 Tools Used:[/dim]")
+        for tool_id, count in tool_usage.most_common(5):
+            console.print(f"  [dim]{tool_id}: {count}[/dim]")
 
 
 @app.command()
@@ -339,10 +548,11 @@ def config_show():
     table.add_row("models", "embedding", config.models.embedding)
     table.add_row("models", "fallback", config.models.fallback)
 
-    # Neo4j
-    table.add_row("neo4j", "uri", config.neo4j.uri)
-    table.add_row("neo4j", "username", config.neo4j.username)
-    table.add_row("neo4j", "password", "***" if config.neo4j.password else "(not set)")
+    # Graph
+    table.add_row("graph", "path", str(config.graph.path))
+    table.add_row("graph", "format", config.graph.format)
+    table.add_row("graph", "embeddings_path", str(config.graph.embeddings_path))
+    table.add_row("graph", "similarity_threshold", str(config.graph.similarity_threshold))
 
     # Sampling
     table.add_row("sampling", "min_steps", str(config.sampling.min_steps))

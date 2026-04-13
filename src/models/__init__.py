@@ -14,8 +14,20 @@ Also provides validation utilities:
 
 And scoring utilities:
 - Completeness scoring for tools and endpoints
+
+And context models:
+- ConversationContext for tracking conversation state
+- Message for conversation messages
+- ToolOutput for tool call outputs
 """
 
+from src.models.context import (
+    ConversationContext,
+    Message,
+    ToolOutput,
+)
+from src.models.scenario import Scenario
+from src.models.judge_scores import JudgeScores
 from src.models.registry import (
     Endpoint,
     Parameter,
@@ -50,6 +62,14 @@ __all__ = [
     "Endpoint",
     "Tool",
     "ToolRegistry",
+    # Context models
+    "ConversationContext",
+    "Message",
+    "ToolOutput",
+    # Scenario model
+    "Scenario",
+    # Judge scores model
+    "JudgeScores",
     # Validators
     "normalize_type_string",
     "truncate_description",

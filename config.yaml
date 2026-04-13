@@ -7,12 +7,13 @@ models:
   fallback: gpt-4o-mini
 
 # ===========================================
-# Neo4j Configuration
+# Graph Configuration (NetworkX)
 # ===========================================
-neo4j:
-  uri: ${NEO4J_URI:-bolt://localhost:7687}
-  username: ${NEO4J_USERNAME:-neo4j}
-  password: ${NEO4J_PASSWORD}
+graph:
+  path: ${GRAPH_PATH:-.cache/graph.pkl}
+  format: ${GRAPH_FORMAT:-pickle}
+  embeddings_path: ${EMBEDDINGS_PATH:-.cache/embeddings.npz}
+  similarity_threshold: 0.7
 
 # ===========================================
 # Sampling Configuration

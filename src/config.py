@@ -10,7 +10,7 @@ This module provides typed configuration models using Pydantic, with support for
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import yaml
 from dotenv import load_dotenv
@@ -34,21 +34,35 @@ class ModelsConfig(BaseModel):
     )
 
 
-class Neo4jConfig(BaseModel):
-    """Configuration for Neo4j database connection."""
+class GraphConfig(BaseModel):
+    """Configuration for NetworkX graph storage."""
 
-    uri: str = Field(
-        default="bolt://localhost:7687",
-        description="Neo4j connection URI"
+    path: Path = Field(
+        default=Path(".cache/graph.pkl"),
+        description="Path to graph file"
     )
-    username: str = Field(
-        default="neo4j",
-        description="Neo4j username"
+    format: Literal["pickle", "graphml", "json"] = Field(
+        default="pickle",
+        description="Graph serialization format"
     )
-    password: str = Field(
-        default="",
-        description="Neo4j password"
+    embeddings_path: Path = Field(
+        default=Path(".cache/embeddings.npz"),
+        description="Path to embeddings cache"
     )
+    similarity_threshold: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Threshold for semantic similarity edges"
+    )
+
+    @field_validator('path', 'embeddings_path', mode='before')
+    @classmethod
+    def convert_to_path(cls, v: Any) -> Path:
+        """Convert string to Path."""
+        if isinstance(v, str):
+            return Path(v)
+        return v
 
 
 class SamplingConfig(BaseModel):
@@ -150,7 +164,7 @@ class Config(BaseModel):
     """Main configuration combining all config sections."""
 
     models: ModelsConfig = Field(default_factory=ModelsConfig)
-    neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
+    graph: GraphConfig = Field(default_factory=GraphConfig)
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     quality: QualityConfig = Field(default_factory=QualityConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
@@ -289,7 +303,7 @@ def apply_cli_overrides(config: Config, **overrides: Any) -> Config:
     Supports dot notation for nested values:
     - sampling.min_steps=3
     - quality.min_score=4.0
-    - neo4j.uri=bolt://remote:7687
+    - graph.path=.cache/mygraph.pkl
 
     Args:
         config: Base configuration
@@ -381,9 +395,14 @@ def validate_config(config: Config) -> List[str]:
     """
     warnings = []
 
-    # Check Neo4j password
-    if not config.neo4j.password:
-        warnings.append("Neo4j password is empty - connection may fail")
+    # Check graph path parent directory
+    graph_dir = config.graph.path.parent
+    if not graph_dir.exists():
+        try:
+            graph_dir.mkdir(parents=True, exist_ok=True)
+            warnings.append(f"Created graph directory: {graph_dir}")
+        except PermissionError:
+            warnings.append(f"Cannot create graph directory: {graph_dir}")
 
     # Check cache directory
     if config.cache.enabled:
